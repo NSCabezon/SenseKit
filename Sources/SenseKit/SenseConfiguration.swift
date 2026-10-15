@@ -64,6 +64,26 @@ public struct SenseGripCorrection: Sendable, Equatable {
         self.mirrorLeft = mirrorLeft
     }
 
+    /// The platform's `.aim` frame, as a correction of `.grip`: a pointer, not
+    /// a hilt. Its -Z is where the controller points.
+    ///
+    /// Measured on device (visionOS 27.2, PS VR2 Sense L and R) with this
+    /// package's "sense frames" probe: `.aim` relative to `.grip` is pitched
+    /// -34.81 degrees about X — the same sign convention as `pitchDegrees`
+    /// (`apply` turns the grip by `eulerXYZ(pitch, 0, 0)` in its own frame, and
+    /// the probe reads that angle back with `SenseMath.eulerDegrees`) — and
+    /// offset by about (±0.0013, -0.0144, -0.0779) m. The offset is left out:
+    /// it moves a ray's origin 8 cm along the ray and does not change where
+    /// it points. Neither the default correction (a Beat Saber hilt) nor the
+    /// uncorrected `.grip` points; both are ~35 degrees off as a ray.
+    ///
+    /// `SenseControllers.aimRay(_:at:)` reads `.aim` itself when the
+    /// accessory publishes it and falls back to this preset when it does not.
+    public static let aim = SenseGripCorrection(tiltDegrees: 0, pitchDegrees: aimPitchDegrees,
+                                                position: .zero)
+    /// `.aim`'s pitch from `.grip` about X, degrees (see `aim`).
+    public static let aimPitchDegrees: Float = -34.81
+
     /// The corrected grip pose for `hand`, from the platform's grip
     /// orientation `raw` and origin `origin` (tracking space).
     ///

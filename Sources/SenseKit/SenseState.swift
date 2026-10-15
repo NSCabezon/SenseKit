@@ -21,6 +21,27 @@ public struct SensePose: Sendable {
     }
 }
 
+/// A pointing ray in tracking space (the ARKit world origin).
+public struct SenseRay: Sendable, Equatable {
+    public var origin: SIMD3<Float>
+    /// Unit length.
+    public var direction: SIMD3<Float>
+
+    public init(origin: SIMD3<Float>, direction: SIMD3<Float>) {
+        self.origin = origin
+        self.direction = direction
+    }
+
+    /// The ray along -Z of a frame (RealityKit's forward, which ARKit's
+    /// anchors share) at `position` with `orientation`.
+    public init(position: SIMD3<Float>, orientation: simd_quatf) {
+        self.init(origin: position, direction: simd_normalize(orientation.act(SIMD3<Float>(0, 0, -1))))
+    }
+
+    /// The point `distance` metres along the ray.
+    public func point(at distance: Float) -> SIMD3<Float> { origin + direction * distance }
+}
+
 /// Snapshot of one controller: connection, pose, buttons, touches and analog values.
 public struct SenseHandState: Sendable {
     /// A Sense controller for this hand is attached (GameController). Only an

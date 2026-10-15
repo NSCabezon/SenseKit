@@ -327,17 +327,8 @@ public final class SenseControllers: @unchecked Sendable {
     /// back to the raw anchor if prediction refuses keeps a controller that
     /// has just appeared (or one the tracker has lost) visible.
     public func pose(_ hand: SenseHand, at time: TimeInterval) -> SensePose? {
-        lock.lock()
-        let stored = accessoryAnchor[hand.rawValue]
-        let provider = accessoryProvider
-        let cfg = _configuration
-        lock.unlock()
-        guard let stored, let provider else { return nil }
-        let now = CACurrentMediaTime()
-        let capS = cfg.predictionCapMs / 1000.0
-        predictionObserver?(time - now, capS)
-        let a = SenseMath.predictionTarget(now: now, time: time, capSeconds: capS)
-            .flatMap { provider.predictAnchor(for: stored, at: $0) } ?? stored
+        guard let predicted = predictedAnchor(hand, at: time, observe: true) else { return nil }
+        let a = predicted.anchor, cfg = predicted.configuration
 
         // `.grip` is the location the platform defines for "where a hand holds
         // this" — the anchor's own transform is the middle of the plastic. A
@@ -361,6 +352,60 @@ public final class SenseControllers: @unchecked Sendable {
         v = SenseVelocityGate.gate(v, cfg.velocityGate.linear)
         w = SenseVelocityGate.gate(w, cfg.velocityGate.angular)
         return SensePose(position: p, orientation: q, linearVelocity: v, angularVelocity: w)
+    }
+
+    /// Where this hand's controller points, predicted to `time` exactly like
+    /// `pose` (same anchor, same `predictionCapMs`): a ray in tracking space,
+    /// for a cursor or for picking. nil when there is no anchor for that hand.
+    ///
+    /// The platform's own `.aim` frame when the accessory publishes one (its
+    /// -Z is the direction, its origin the ray's), otherwise `.grip` turned by
+    /// `SenseGripCorrection.aim`. Both with the RENDERED correction, as
+    /// `pose` reads `.grip`. Independent of `gripCorrection` and
+    /// `liveGripCorrection`, which calibrate a held object, not a pointer.
+    ///
+    /// To point at a flat surface (a 2D game image on a quad), intersect this
+    /// ray with the quad in the same space: the ARKit world origin the
+    /// anchors are in is the one CompositorServices renders from, shared
+    /// across the app.
+    public func aimRay(_ hand: SenseHand, at time: TimeInterval) -> SenseRay? {
+        guard let a = predictedAnchor(hand, at: time, observe: false)?.anchor else { return nil }
+        let locations = a.accessory.locations
+        if locations.contains(.aim) {
+            let m = a.coordinateSpace(for: .aim, correction: .rendered)
+                .ancestorFromSpaceTransformFloat().matrix
+            return SenseRay(position: SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z),
+                            orientation: simd_quatf(m))
+        }
+        let m = locations.contains(.grip)
+            ? a.coordinateSpace(for: .grip, correction: .rendered)
+                .ancestorFromSpaceTransformFloat().matrix
+            : a.originFromAnchorTransform
+        let (p, q) = SenseGripCorrection.aim.apply(raw: simd_quatf(m),
+                                                   origin: SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z),
+                                                   hand: hand)
+        return SenseRay(position: p, orientation: q)
+    }
+
+    /// The stored anchor for `hand`, predicted to `time` under the cap, with
+    /// the configuration it was predicted under. Falling back to the raw
+    /// anchor if prediction refuses keeps a controller that has just appeared
+    /// (or one the tracker has lost) visible. `observe` reports the horizon to
+    /// `predictionObserver` (the pose path only, so it fires once a pose).
+    private func predictedAnchor(_ hand: SenseHand, at time: TimeInterval,
+                                 observe: Bool) -> (anchor: AccessoryAnchor, configuration: SenseConfiguration)? {
+        lock.lock()
+        let stored = accessoryAnchor[hand.rawValue]
+        let provider = accessoryProvider
+        let cfg = _configuration
+        lock.unlock()
+        guard let stored, let provider else { return nil }
+        let now = CACurrentMediaTime()
+        let capS = cfg.predictionCapMs / 1000.0
+        if observe { predictionObserver?(time - now, capS) }
+        let a = SenseMath.predictionTarget(now: now, time: time, capSeconds: capS)
+            .flatMap { provider.predictAnchor(for: stored, at: $0) } ?? stored
+        return (a, cfg)
     }
 
     /// How far ahead a ghost sample may be predicted, seconds — fixed, it is
