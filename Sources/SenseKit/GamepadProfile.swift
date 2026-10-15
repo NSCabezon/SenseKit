@@ -63,11 +63,21 @@ public enum GamepadProfile {
             // elements (and their handlers) did.
             return read(extended: pad, capture: share)
         case .n64, .unknown:
+            // Two sources, OR'd: the live legacy elements and the GCDevicePhysicalInput state
+            // (`c.input`). On visionOS 27 the system eats the N64's A and left stick on the
+            // legacy path (it uses them as pointer input); the new API may still carry them.
             let p = c.physicalInputProfile
+            let q = c.input.nextInputState() ?? c.input.capture()
             return read(kind: kind,
-                        pressed: { p.buttons[$0]?.isPressed ?? false },
-                        pad: { p.dpads[$0].map { SIMD2($0.xAxis.value, $0.yAxis.value) } },
-                        axis: { p.axes[$0]?.value })
+                        pressed: { n in (p.buttons[n]?.isPressed ?? false) || (q.buttons[n]?.pressedInput.isPressed ?? false) },
+                        pad: { n in
+                            if let d = p.dpads[n] {
+                                let v = SIMD2(d.xAxis.value, d.yAxis.value)
+                                if simd_length(v) > 0.05 { return v }
+                            }
+                            return q.dpads[n].map { SIMD2($0.xAxis.value, $0.yAxis.value) }
+                        },
+                        axis: { n in p.axes[n]?.value ?? q.axes[n]?.absoluteInput?.value })
         }
     }
 
