@@ -1,11 +1,13 @@
 # SenseKit
 
-PS VR2 Sense controllers on visionOS: discovery, pose, input and haptics.
+PS VR2 Sense controllers on visionOS: discovery, pose, input, haptics, and the ghost controller
+(the Sense model drawn at a resting controller's real pose).
 
 ## Status
 
-Extracted from Klepton's `KleptonControllers.swift` (behaviour unchanged); Klepton consumes it as a
-submodule. GameController + ARKit + CoreHaptics only: no environment variables, no C.
+Extracted from Klepton's `KleptonControllers.swift` and `KleptonHUD.swift` (behaviour unchanged);
+Klepton consumes it as a submodule. GameController + ARKit + CoreHaptics + Metal only: no
+environment variables, no C.
 
 ## What it does
 
@@ -18,6 +20,12 @@ submodule. GameController + ARKit + CoreHaptics only: no environment variables, 
   (`SenseButtons`); rebinding on every connect, cleared by attachment, queue or `capture()`.
 - **Haptics**: one `CHHapticEngine` per hand, a continuous looping player driven by a per-frame level
   (or ALVR's discrete pulses), gain and minimum pulse, played off the render thread.
+- **Ghost controllers**: in full VR the real controllers are invisible, so one that is NOT in a hand
+  (on a table, on the floor) is drawn at its real tracked pose and fades out the moment it is picked
+  up. `SenseGhosts` is the in-hand decision per hand (platform held flag, recent input, moving with a
+  palm near or no hands tracked; hysteresis and a fade — `SenseGhostConfiguration` has every knob),
+  `SenseGhostMesh` the model (capsule grip, tracking ring, top disc; plain vertex/index arrays) and
+  `SenseGhostRenderer` draws it with Metal into the app's own stereo encoder.
 
 ## Use
 
@@ -84,6 +92,35 @@ let presses = input.buttons.changes(since: lastButtons).pressed
 lastButtons = input.buttons
 // Keep a source off an axis (a cursor, the N64 C buttons): hub.pollInput { src, axis in ... }
 ```
+
+### Ghost controllers
+
+```swift
+let ghosts = SenseGhosts(configuration: SenseGhostConfiguration())   // thresholds, fit, colours
+ghosts.logger = { print("[ghost]", $0) }                              // "left: SHOWN — resting (hand away)"
+let ghostRenderer = try SenseGhostRenderer(device: device, colorFormat: layerColorFormat,
+                                           depthFormat: .depth32Float,
+                                           amplification: viewCount, reverseZ: true)
+
+// Every frame, on the render thread, after `pollInput`:
+let palms = [hands.leftHand, hands.rightHand].compactMap { $0 }.map(SenseGhostHands.palm)
+ghosts.update(samples: [sense.ghostSample(.left, at: t), sense.ghostSample(.right, at: t)],
+              palms: palms,
+              handTrackingSeesHands: handTrackingRunning && !palms.isEmpty,
+              lastInput: [sense.inputState(.left).lastActivity, sense.inputState(.right).lastActivity],
+              now: CACurrentMediaTime())
+
+// In the frame's render encoder (viewports and amplification mappings already set):
+if ghosts.hands.contains(where: { $0.alpha > 0 }) {
+    ghostRenderer.encode(encoder, views: views.map { SenseGhostView(viewProj: $0.projection * $0.view) },
+                         recenter: originFromWorld, ghosts: ghosts,
+                         depthOverScene: false)   // true when the pass under it wrote a real scene's depth
+}
+```
+
+Without Metal (RealityKit): build a `MeshResource` once from `SenseGhostMesh.sense(right:)` (8 floats per
+vertex: position, normal, uv; UInt16 triangle list, counter-clockwise), and each frame set the entity's
+transform to `ghosts.hands[h].pose * configuration.fit` and its opacity to `ghosts.hands[h].alpha`.
 
 ## Requirements
 
