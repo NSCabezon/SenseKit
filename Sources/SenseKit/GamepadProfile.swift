@@ -58,9 +58,12 @@ public enum GamepadProfile {
         case .extended:
             guard let pad = c.extendedGamepad else { return nil }
             let share = c.physicalInputProfile.buttons["Button Share"]?.isPressed ?? false
-            return read(extended: pad.capture(), capture: share)
+            // Live elements, not `capture()`: on visionOS 27 the snapshot of a controller
+            // without an extended profile (the N64) never reflected any press, while the live
+            // elements (and their handlers) did.
+            return read(extended: pad, capture: share)
         case .n64, .unknown:
-            let p = c.physicalInputProfile.capture()
+            let p = c.physicalInputProfile
             return read(kind: kind,
                         pressed: { p.buttons[$0]?.isPressed ?? false },
                         pad: { p.dpads[$0].map { SIMD2($0.xAxis.value, $0.yAxis.value) } },
