@@ -36,6 +36,55 @@ let right = sense.state(.right, at: presentationTime)  // input + predicted pose
 sense.pumpHaptics()
 ```
 
+## Gamepads and the input hub
+
+`SenseInputHub` makes SenseKit the one input layer of a game: the Sense controllers plus every
+classic gamepad visionOS exposes as a `GCController`, polled together once a frame, with the
+sticks **arbitrated** so two controllers never fight over one axis (the bug it exists for: a
+parked Sense stick writing (0, 0) every frame over the N64 stick in use → jitter).
+
+- `GamepadProfile.read(_:)` reads a pad into a `GamepadState` (`GamepadButtons` + sticks +
+  triggers + `kind`): `extendedGamepad` pads (DualSense, Xbox, Switch Pro…) positionally —
+  `a` south, `b` east, `x` west, `y` north, `l`/`r` shoulders, `zl`/`zr` triggers, `start` =
+  menu, `select` = options — and the Nintendo Switch Online **N64 controller** (no
+  `extendedGamepad`; `productCategory` "Switch N64 Controller") by element name:
+
+  | N64            | Element name(s)                              | `GamepadButtons` / state   |
+  |----------------|----------------------------------------------|----------------------------|
+  | A, B           | "Button A", "Button B"                       | `.a`, `.b`                 |
+  | Z              | "Left Trigger"                               | `.zl` (`leftTrigger` = 1)  |
+  | L, R           | "Left Shoulder", "Right Shoulder"            | `.l`, `.r`                 |
+  | Start          | "Button Menu"                                | `.start`                   |
+  | Share, Home    | "Button Share", "Button Home"                | `.select`, `.home`         |
+  | D-pad          | "Direction Pad" (+ "… Up/Down/Left/Right")   | `.dpadUp` … `.dpadRight`   |
+  | Control Stick  | "Left Thumbstick" (a `GCControllerDirectionPad`) | `leftStick`            |
+  | C buttons      | "Right Thumbstick Up/Down/Left/Right"        | `.cUp` … `.cRight` (and `rightStick` as ±1) |
+  | (right trigger)| "Right Trigger"                              | `.zr`                      |
+
+  Z is reported as `zl` on purpose: it is the generic name GameController gives it, so one
+  mapping serves the N64 and an extended pad.
+- `StickArbiter` (pure, one per axis): an axis is owned by the source that most recently moved
+  it past the deadzone (0.2); while the owner is deflected its value wins; when it returns to
+  centre it keeps the axis until another source deflects, so parked zeros never win.
+- `SenseInputHub.pollInput()` runs `sense.controllersChanged()` + `sense.pollInput()`, reads the
+  pads, logs bind/unbind through `logger`, and `arbitrated()` gives the frame: both sticks with
+  their owners, the OR of every pad's buttons, and both Sense hands.
+
+```swift
+let hub = SenseInputHub()                           // or SenseInputHub(sense: mySense)
+hub.logger = { print("[input]", $0) }
+var lastButtons: GamepadButtons = []
+
+// Every frame, on the render thread:
+if hub.pollInput() { hub.sense.forgetPoses(); /* rebuild the tracking provider */ }
+let input = hub.arbitrated()
+game.move(input.leftStick)                          // whoever is actually using it
+if input.buttons.contains(.zl) || input.senseLeft.trigger > 0.5 { game.zTarget() }
+let presses = input.buttons.changes(since: lastButtons).pressed
+lastButtons = input.buttons
+// Keep a source off an axis (a cursor, the N64 C buttons): hub.pollInput { src, axis in ... }
+```
+
 ## Requirements
 
 visionOS 26+.
