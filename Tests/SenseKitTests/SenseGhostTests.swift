@@ -180,6 +180,29 @@ private let nearPalm = SIMD3<Float>(0.05, 1, -0.5)    // 5 cm away
         #expect(s.lastReason == "resting (still 2.5 s)")
     }
 
+    @Test func shownStaysShownWhenTheHandsLeaveTheCameras() {
+        var s = SenseGhostHandState()
+        _ = step(&s, resting(), palms: [farPalm], seesHands: true, lastInput: 100, now: 101.9)  // last held tick
+        _ = step(&s, resting(), palms: [farPalm], seesHands: true, lastInput: 100, now: 103.0)  // 1.1 s > handAwayWait
+        #expect(s.visible)
+        // The head turns: no hand in view; 1.2 s since held is under showAfter (2.5 s).
+        let lines = step(&s, resting(), palms: [], seesHands: false, lastInput: 100, now: 103.1)
+        #expect(s.visible)
+        #expect(lines.isEmpty)
+    }
+
+    @Test func speedWithoutHandsInViewIsNotAPickup() {
+        var s = SenseGhostHandState()
+        _ = step(&s, resting(), now: 100)                                   // shown, never held
+        #expect(s.visible)
+        // Tracking noise while the hands are out of view: fast, but it has not moved from its rest.
+        _ = step(&s, resting(speed: 0.5, angularSpeed: 3), palms: [], seesHands: false, now: 100.1)
+        #expect(s.visible)
+        // A real pickup moves it off its rest point.
+        _ = step(&s, resting(SIMD3(0, 1.05, -0.5)), palms: [], seesHands: false, now: 100.2)
+        #expect(!s.visible && s.lastReason == "held (moving, no hands tracked)")
+    }
+
     @Test func configurableWindows() {
         var cfg = SenseGhostConfiguration()
         cfg.inputWindow = 0.5

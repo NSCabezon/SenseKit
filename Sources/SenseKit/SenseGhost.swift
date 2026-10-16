@@ -145,7 +145,16 @@ public struct SenseGhostHandState: Sendable {
         if let s = sample, s.positionTracked {
             pose = s.originFromGrip
             let p = SIMD3<Float>(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z)
-            if s.speed > cfg.motionSpeed || s.angularSpeed > cfg.motionAngularSpeed { lastMotion = now }
+            // A ghost already SHOWN trusts speed only while hand tracking sees a hand: with
+            // none in view (the wearer turned the head, the hands left the cameras), a resting
+            // controller's speed spikes from tracking noise and read as a pickup (the ghost
+            // blinked off when looked at quickly, SwitchWaker on the device, 2026-10-16).
+            // Displacement from the rest point below still catches a real pickup. A hidden
+            // one keeps trusting it: hands full of controllers are not reported either.
+            if (handTrackingSeesHands || !visible) &&
+                (s.speed > cfg.motionSpeed || s.angularSpeed > cfg.motionAngularSpeed) {
+                lastMotion = now
+            }
             if let r = restPos {
                 if simd_distance(p, r) > cfg.motionDistance { lastMotion = now; restPos = p }
             } else { restPos = p }
@@ -162,8 +171,11 @@ public struct SenseGhostHandState: Sendable {
             } else {
                 let handAway = handTrackingSeesHands && !palmNear
                 let wait = handAway ? cfg.handAwayWait : cfg.showAfter
-                show = now - lastHeldEvidence > wait
-                reason = show ? (handAway ? "resting (hand away)" : "resting (still \(cfg.showAfter) s)")
+                // A ghost already shown stays shown until there is held evidence: the hands
+                // leaving the cameras lengthens the wait (handAwayWait -> showAfter) but is
+                // no reason to hide what is resting (the blink when looked at quickly).
+                show = visible || now - lastHeldEvidence > wait
+                reason = show ? (visible ? lastReason : handAway ? "resting (hand away)" : "resting (still \(cfg.showAfter) s)")
                               : "settling"
             }
         } else {
