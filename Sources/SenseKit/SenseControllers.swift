@@ -1,4 +1,6 @@
+#if os(visionOS)
 import ARKit
+#endif
 import CoreHaptics
 import Foundation
 import GameController
@@ -77,6 +79,7 @@ public final class SenseControllers: @unchecked Sendable {
 
     // MARK: - State
 
+#if os(visionOS)
     /// The most recent anchor per hand — **the object, not the pose it carried**.
     ///
     /// The anchor stream is a *sensor* feed: it delivers when the tracker has
@@ -90,6 +93,7 @@ public final class SenseControllers: @unchecked Sendable {
     /// Held so the render thread can predict against it. `makeTrackingProvider`
     /// is the only writer, and it runs before the session that feeds it.
     private var accessoryProvider: AccessoryTrackingProvider?
+#endif
 
     /// The last polled input per hand (pose always nil). Under `lock`.
     private var input: [SenseHandState] = [SenseHandState(), SenseHandState()]
@@ -137,6 +141,7 @@ public final class SenseControllers: @unchecked Sendable {
         return true
     }
 
+#if os(visionOS)
     /// Build the accessory-tracking provider for whatever is paired now; nil
     /// when the platform has no accessory tracking.
     ///
@@ -170,6 +175,7 @@ public final class SenseControllers: @unchecked Sendable {
     private func setProvider(_ p: AccessoryTrackingProvider?) {
         lock.lock(); accessoryProvider = p; lock.unlock()
     }
+#endif
 
     /// Every element name a controller carries, once, when it attaches.
     ///
@@ -216,15 +222,18 @@ public final class SenseControllers: @unchecked Sendable {
         // accessory provider that is about to wrap the same GCControllers.
         buttonBinding.removeAll()
         lock.lock()
+#if os(visionOS)
         accessoryAnchor.removeAll()
         // The provider goes too: predicting against a provider whose session is
         // being torn down and rebuilt is the one way a stale anchor could still
         // produce a fresh-looking pose after the controller is gone.
         accessoryProvider = nil
+#endif
         for i in 0...1 { input[i] = SenseHandState(lastActivity: input[i].lastActivity) }
         lock.unlock()
     }
 
+#if os(visionOS)
     // MARK: - Anchors
 
     /// Consume the accessory anchor stream. Runs for the life of the provider
@@ -437,6 +446,20 @@ public final class SenseControllers: @unchecked Sendable {
                                 heldByPlatform: a.heldChirality != nil,
                                 speed: simd_length(a.velocity), angularSpeed: simd_length(a.angularVelocity))
     }
+#else
+    // macOS (and any platform without ARKit accessory tracking): input and
+    // haptics only. The pose API stays, so a consumer compiles unchanged on
+    // both, and always answers "no pose".
+
+    /// No accessory tracking on this platform: always nil.
+    public func pose(_ hand: SenseHand, at time: TimeInterval) -> SensePose? { nil }
+
+    /// No accessory tracking on this platform: always nil.
+    public func aimRay(_ hand: SenseHand, at time: TimeInterval) -> SenseRay? { nil }
+
+    /// No accessory tracking on this platform: always nil.
+    public func ghostSample(_ hand: SenseHand, at time: TimeInterval) -> SenseGhostSample? { nil }
+#endif
 
     // MARK: - Input binding (connect / disconnect at any time)
 

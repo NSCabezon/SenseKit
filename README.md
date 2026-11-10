@@ -1,6 +1,7 @@
 # SenseKit
 
-PS VR2 Sense controllers on visionOS: discovery, pose, input and haptics.
+PS VR2 Sense controllers on visionOS (discovery, pose, input and haptics) and macOS (discovery,
+input and haptics; no pose).
 
 ## Status
 
@@ -128,13 +129,34 @@ lastButtons = input.buttons
 
 ## Requirements
 
-visionOS 26+.
+visionOS 26+ or macOS 26+.
+
+## macOS
+
+The package builds for macOS too: the Sense controllers paired to the Mac over Bluetooth, and
+every classic pad, through GameController alone. Measured on macOS 27 with both Sense
+controllers paired: each is its own `GCController` ("PlayStation VR2 Sense Controller (L)" /
+"(R)", `productCategory` "Spatial Controller", no `extendedGamepad`), with the same element names
+as on visionOS ("Button A", "Button B", "Button Menu", "Grip", "Thumbstick Button", the
+"Thumbstick" DPAD, "Trigger") and `haptics`. They appear asynchronously, a second or two after
+launch, delivered on the main run loop, so the process must run one (a Cocoa/SDL event loop, or
+`RunLoop.main.run()` in a CLI). No Info.plist is needed, even for a command-line binary; set
+`GCController.shouldMonitorBackgroundEvents = true` to get input while another app is
+frontmost (a CLI in Terminal always is).
+
+What is not there on macOS (ARKit accessory tracking and `GCSpatialAccessory` are visionOS
+only): `makeTrackingProvider()` and `consumeAnchors(from:)` do not exist; `pose(_:at:)`,
+`aimRay(_:at:)` and `ghostSample(_:at:)` always return nil, so `state(_:at:)` is the input with
+`pose == nil`. Everything else (`pollInput`, `inputState`, `SenseButtons`, `pumpHaptics`,
+`SenseInputHub`, `StickArbiter`, `GamepadProfile`, `ShakeDetector` fed by your own velocities)
+behaves as on visionOS. No capacitive touches were seen in the element lists on macOS
+(`touches` stays empty).
 
 ## App setup
 
 What an app needs before the controllers show up at all:
 
-- **Deployment target visionOS 26** (`AccessoryTrackingProvider`, spatial `GCController`s).
+- **Deployment target visionOS 26** (or macOS 26 for input + haptics only) (`AccessoryTrackingProvider`, spatial `GCController`s).
 - **`GCSupportedGameControllers`** must list the profile `SpatialGamepad`, or GameController never
   offers the Sense controllers to the app; add `ExtendedGamepad` too for classic pads.
 - **`NSAccessoryTrackingUsageDescription`** is required. Requesting accessory tracking without it is

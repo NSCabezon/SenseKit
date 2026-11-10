@@ -1,13 +1,13 @@
 // swift-tools-version:6.2
 //
-// SenseKit — PS VR2 Sense controllers on visionOS: discovery, pose, input and haptics.
+// SenseKit — PS VR2 Sense controllers on visionOS (discovery, pose, input, haptics) and macOS (no pose).
 // Extracted from Klepton's KleptonControllers.swift so any visionOS app can use them.
 // GameController + ARKit + CoreHaptics only; the package never reads environment variables.
 import PackageDescription
 
 let package = Package(
     name: "SenseKit",
-    platforms: [.visionOS(.v26)],
+    platforms: [.visionOS(.v26), .macOS(.v26)],
     products: [
         .library(name: "SenseKit", targets: ["SenseKit"]),
     ],
