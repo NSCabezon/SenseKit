@@ -1,7 +1,8 @@
 # SenseKit
 
-PS VR2 Sense controllers on visionOS: discovery, pose, input, haptics, and the ghost controller
-(the Sense model drawn at a resting controller's real pose).
+PS VR2 Sense controllers on visionOS (discovery, pose, input, haptics, and the ghost controller:
+the Sense model drawn at a resting controller's real pose) and macOS (discovery, input and
+haptics; no pose).
 
 ## Status
 
@@ -16,6 +17,9 @@ environment variables, no C.
 - **Pose**: the accessory anchor stream (`consumeAnchors(from:)`), predicted to the frame's presentation
   time with a horizon cap, the `.grip` frame with a grip correction (PSVR2 tilt, pitch/yaw/roll, offset,
   pivot, left-hand mirror), velocities rotated and noise-gated, and a ghost sample for drawing the device.
+- **Pointing**: `aimRay(_:at:)`, a world-space ray from the platform's `.aim` frame, predicted like the
+  pose (see [Pointing](#pointing)).
+- **Shake**: `ShakeDetector`, a pure per-controller shake pulse (Wii-style spin) fed the pose's velocities.
 - **Input**: buttons, capacitive touches, trigger, grip and stick per hand, in physical names
   (`SenseButtons`); rebinding on every connect, cleared by attachment, queue or `capture()`.
 - **Haptics**: one `CHHapticEngine` per hand, a continuous looping player driven by a per-frame level
@@ -42,6 +46,44 @@ if sense.controllersChanged() { sense.forgetPoses(); /* rebuild the provider, re
 sense.pollInput()
 let right = sense.state(.right, at: presentationTime)  // input + predicted pose
 sense.pumpHaptics()
+```
+
+## Pointing
+
+The default grip correction is Klepton's Beat Saber hilt (-37° pitch plus tilt and position nudges)
+and is the wrong frame for a pointer: as a ray, it and the uncorrected `.grip` both run about 35° off
+where the controller points. The platform publishes a pointer of its own, the `.aim` frame; on device
+(visionOS 27.2, PS VR2 Sense L and R) the "sense frames" probe measures it relative to `.grip` as
+pitched -34.81° about X and offset about (±0.0013, -0.0144, -0.0779) m. Its -Z is the direction.
+
+```swift
+// Every frame: the right controller's ray, predicted like `state(.right, at:)`.
+if let ray = sense.aimRay(.right, at: presentationTime) {
+    cursor = myQuad.intersection(origin: ray.origin, direction: ray.direction)
+}
+```
+
+`aimRay` reads `.aim` when the accessory publishes it and otherwise turns `.grip` by
+`SenseGripCorrection.aim` (tilt 0, pitch -34.81, no position nudge). It ignores `gripCorrection`, so a
+game can keep a hilt for the held object and still point. A consumer that wants the pose itself to be
+the pointer sets `SenseConfiguration(gripCorrection: .aim)`.
+
+**Pointing at a 2D surface**: intersect the ray with your quad in the same space. The anchors are in
+the ARKit world origin, which is the one CompositorServices renders from and is shared across the
+app, so a quad placed in that space needs no other transform.
+
+## Shake
+
+`ShakeDetector` (pure, one per controller) turns velocities into a held pulse: speed above
+`linearThreshold` (1.6 m/s) or angular speed above `angularThreshold` (12 rad/s) starts a pulse that
+reads true for `holdTicks` (5) updates, and no new one starts for `refractory` (0.25 s) after it began.
+The defaults come from GalaxyPad and are tuned for Wii-style spin shakes (a wrist flick turns fast and
+moves little); they are not yet validated on a headset.
+
+```swift
+var shake = [ShakeDetector(), ShakeDetector()]
+// Every poll:
+let spin = shake[hand.rawValue].update(pose: sense.pose(hand, at: now), at: now)
 ```
 
 ## Gamepads and the input hub
@@ -124,7 +166,54 @@ transform to `ghosts.hands[h].pose * configuration.fit` and its opacity to `ghos
 
 ## Requirements
 
-visionOS 26+.
+visionOS 26+ or macOS 26+.
+
+## macOS
+
+The package builds for macOS too: the Sense controllers paired to the Mac over Bluetooth, and
+every classic pad, through GameController alone. Measured on macOS 27 with both Sense
+controllers paired: each is its own `GCController` ("PlayStation VR2 Sense Controller (L)" /
+"(R)", `productCategory` "Spatial Controller", no `extendedGamepad`), with the same element names
+as on visionOS ("Button A", "Button B", "Button Menu", "Grip", "Thumbstick Button", the
+"Thumbstick" DPAD, "Trigger") and `haptics`. They appear asynchronously, a second or two after
+launch, delivered on the main run loop, so the process must run one (a Cocoa/SDL event loop, or
+`RunLoop.main.run()` in a CLI). No Info.plist is needed, even for a command-line binary; set
+`GCController.shouldMonitorBackgroundEvents = true` to get input while another app is
+frontmost (a CLI in Terminal always is).
+
+What is not there on macOS (ARKit accessory tracking and `GCSpatialAccessory` are visionOS
+only): `makeTrackingProvider()` and `consumeAnchors(from:)` do not exist; `pose(_:at:)`,
+`aimRay(_:at:)` and `ghostSample(_:at:)` always return nil, so `state(_:at:)` is the input with
+`pose == nil`. Everything else (`pollInput`, `inputState`, `SenseButtons`, `pumpHaptics`,
+`SenseInputHub`, `StickArbiter`, `GamepadProfile`, `ShakeDetector` fed by your own velocities)
+behaves as on visionOS. No capacitive touches were seen in the element lists on macOS
+(`touches` stays empty).
+
+## App setup
+
+What an app needs before the controllers show up at all:
+
+- **Deployment target visionOS 26** (or macOS 26 for input + haptics only) (`AccessoryTrackingProvider`, spatial `GCController`s).
+- **`GCSupportedGameControllers`** must list the profile `SpatialGamepad`, or GameController never
+  offers the Sense controllers to the app; add `ExtendedGamepad` too for classic pads.
+- **`NSAccessoryTrackingUsageDescription`** is required. Requesting accessory tracking without it is
+  not a refusal: the system kills the process (a TCC crash report), on device only, since the
+  Simulator does not enforce TCC. `makeTrackingProvider()` builds a provider even with no controller
+  paired, so the request can come with nothing connected.
+
+```xml
+<key>GCSupportedGameControllers</key>
+<array>
+    <dict><key>ProfileName</key><string>SpatialGamepad</string></dict>
+    <dict><key>ProfileName</key><string>ExtendedGamepad</string></dict>
+</array>
+<key>NSAccessoryTrackingUsageDescription</key>
+<string>Tracks your PlayStation VR2 Sense controllers.</string>
+```
+
+**SDL-based engines**: an engine with SDL's gamepad support (e.g. Aurora's SDL3, through its MFi
+joystick driver) also enumerates the Sense controllers and every pad as SDL gamepads. When SenseKit
+owns input, disable the engine's SDL gamepad path, or each pad is read twice.
 
 ## Adding it
 

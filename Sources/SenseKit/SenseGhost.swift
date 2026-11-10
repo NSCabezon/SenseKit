@@ -246,7 +246,8 @@ public final class SenseGhosts {
     }
 }
 
-/// Hand-tracking helpers for the ghost decision.
+#if os(visionOS)
+/// Hand-tracking helpers for the ghost decision (visionOS only: `HandAnchor`).
 public enum SenseGhostHands {
     /// The middle of the palm: halfway between the middle finger's metacarpal
     /// base and its knuckle, where a fist closes around a grip. The anchor's
@@ -261,3 +262,4 @@ public enum SenseGhostHands {
         return SIMD3((b.x + k.x) / 2, (b.y + k.y) / 2, (b.z + k.z) / 2)
     }
 }
+#endif
